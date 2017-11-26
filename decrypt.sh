@@ -8,28 +8,28 @@
 
 decrypt() {
   FILENAME="$1"
-  if [[ $FILENAME ]] ; then
+  if [[ $FILENAME ]] ; then                                                                       # If file exists, delete the preceding lines containing the passwd hint.
     line=$(( $(cat $FILENAME | grep -n -E -- "-{64}" | cut -d : -f 1) + 1 ))                      # Get the line number after password hint block.
     sed '/----------------------------------------------------------------/,$!d' "$FILENAME" |    # Remove the lines containing the password hint.
     sed '1d' > "${FILENAME}.intermediate"
 
-    FILENAME="${FILENAME}.intermediate"
-    FILEOUT="$(echo "${FILENAME}" | sed -e 's|\.aes-256-cbc\.intermediate||')"
-
-    openssl aes-256-cbc -d -a -in "${FILENAME}" -out "$FILEOUT" 2> /dev/null                      # Run OpenSSL.
+    openssl aes-256-cbc -d -a -in "${FILENAME}.intermediate" -out "${FILENAME}.decrypted" 2> /dev/null                      # Run OpenSSL.
     if [[ $(echo $?) != 0 ]] ; then                                                               # If exit code is not 0, return immediately.
       echo "Wrong Password."
-      rm "${FILENAME}" "${FILEOUT}"
+      rm "${FILENAME}.intermediate"
       return
     fi
 
-    if [[ "$FILEOUT" =~ \.tar$ ]] ; then                    # If $FILEOUT is a tar archive, extract to disk.
-      tar -xf "$FILEOUT"
-      rm "$FILEOUT"
+    if [[ $(file ${FILENAME}.decrypted | grep tar) ]] ; then                    # If $FILENAME is a tar archive, extract to disk.
+      if [[ ! "$FILENAME" =~ \.tar$ ]] ; then
+        mv ${FILENAME}.decrypted ${FILENAME}.tar
+      fi
+      tar -xf "${FILENAME}.tar"
+      rm "${FILENAME}.tar"
     fi
-    rm "${FILENAME}"             # Clean up intermediary files.
+    rm "${FILENAME}.intermediate"             # Clean up intermediary files.
 
-    echo "Now you safely remove the encrypted file."
+    echo "Now you can safely remove the encrypted file."
   else
     echo "usage: decrypt source_file.aes-256-cbc"
   fi

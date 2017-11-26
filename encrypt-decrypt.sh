@@ -9,27 +9,29 @@
 #        decrypt source_file.aes-256-cbc
 
 encrypt() {
+  IS_DIR=0
   FILENAME="$1"
   if [[ $FILENAME ]] ; then                                 # If command argument exists...
     if [[ -d "$FILENAME" ]] ; then                          # If $FILENAME is a directory, create a tar archive...
-      FILENAME="$(echo "$FILENAME" | sed -e 's|\/||')"      # Remove the trailing '/' in the command argument.
-      tar -cf "${FILENAME}.tar" "$FILENAME"
+      IS_DIR=1
+      FILENAME="$(echo "$FILENAME" | sed -e 's|\/||')"      # Remove the trailing '/' in the command argument, if it exists.
+      tar -cf "${FILENAME}.tar" "$FILENAME"                 # Create the tarball.
       FILENAME="${FILENAME}.tar"                            # Set $FILENAME to the tar archive.
     elif [[ ! -f "$FILENAME" ]] ; then                      # If $FILENAME is not a regular file...
       echo "$FILENAME is not a valid file or directory."
-      exit 1                                                # ...exit immediately.
+      return 1                                              # ...exit immediately.
     fi
 
-    HINT_EXISTS=''
+    PASSWD_HINT=''
+    HINT_EXISTS=0
     if [[ -f passwd.hint ]] ; then                          # If passwd.hint file exists...
       printf "passwd.hint file found.\n"
-      HINT_EXISTS='true'
-      PASSWD_HINT=''
+      HINT_EXISTS=1
       NL=$'\n'
-      while read line ; do                                  # Prepend password hint to $PASSWD_HINT
+      while read line ; do                                  # Prepend password hint to $PASSWD_HINT line-by-line.
         PASSWD_HINT=$(echo -ne "${PASSWD_HINT}\n${line}")
       done < passwd.hint
-    else
+    else                                                    # Otherwise, have the user input a password hint.
       printf "passwd.hint file not found.\n"
       printf "Enter in a password hint: "
       read PASSWD_HINT
@@ -37,8 +39,8 @@ encrypt() {
 
     openssl aes-256-cbc -a -salt -in "$FILENAME" -out "${FILENAME}.aes-256-cbc"       # Run OpenSSL.
 
-    echo -e "\n$(printf -- '-%.0s' {1..64})\n$(cat "${FILENAME}.aes-256-cbc")" > "${FILENAME}.aes-256-cbc"        # Prepend a separator in the encrypted file.
-    if [[ $HINT_EXISTS ]] ; then
+    echo -e "\n$(printf -- '-%.0s' {1..64})\n$(cat "${FILENAME}.aes-256-cbc")" > "${FILENAME}.aes-256-cbc"          # Prepend a separator in the encrypted file.
+    if [[ $HINT_EXISTS == 1 ]] ; then
       echo -e "${PASSWD_HINT}$(cat "${FILENAME}.aes-256-cbc")" > "${FILENAME}.aes-256-cbc"                          # Now, prepend $PASSWD_HINT.
       tail -n +2 "${FILENAME}.aes-256-cbc" > tmp                                                                    # Remove the first line which is empty.
       mv tmp "${FILENAME}.aes-256-cbc"
@@ -46,11 +48,14 @@ encrypt() {
       echo -e "${PASSWD_HINT}$(cat "${FILENAME}.aes-256-cbc")" > "${FILENAME}.aes-256-cbc"                          # Now, prepend $PASSWD_HINT.
     fi
 
-    if [[ "$FILENAME" =~ \.tar$ ]] ; then                   # Clean up intermediary files.
-      rm "$FILENAME"
+    # NEEDS IMPLEMENTATION: HASH THE FILENAME; ADD THE HASHED FILENAME TO THE TOP OF THE ENCRYPTED FILE
+    # MAKE IT SO THAT DECRYPTION IS INDEPENDENT FROM THE FILENAME
+
+    if [[ $IS_DIR == 1 ]] ; then                   # Clean up intermediary files.
+      rm "${FILENAME}"
     fi
 
-    echo "Now you safely remove the original file."
+    echo "Now you can safely remove the original file."
   else
     echo "usage: encrypt source_file"
   fi
@@ -58,28 +63,28 @@ encrypt() {
 
 decrypt() {
   FILENAME="$1"
-  if [[ $FILENAME ]] ; then
+  if [[ $FILENAME ]] ; then                                                                       # If file exists, delete the preceding lines containing the passwd hint.
     line=$(( $(cat $FILENAME | grep -n -E -- "-{64}" | cut -d : -f 1) + 1 ))                      # Get the line number after password hint block.
     sed '/----------------------------------------------------------------/,$!d' "$FILENAME" |    # Remove the lines containing the password hint.
     sed '1d' > "${FILENAME}.intermediate"
 
-    FILENAME="${FILENAME}.intermediate"
-    FILEOUT="$(echo "${FILENAME}" | sed -e 's|\.aes-256-cbc\.intermediate||')"
-
-    openssl aes-256-cbc -d -a -in "${FILENAME}" -out "$FILEOUT" 2> /dev/null                      # Run OpenSSL.
+    openssl aes-256-cbc -d -a -in "${FILENAME}.intermediate" -out "${FILENAME}.decrypted" 2> /dev/null                      # Run OpenSSL.
     if [[ $(echo $?) != 0 ]] ; then                                                               # If exit code is not 0, return immediately.
       echo "Wrong Password."
-      rm "${FILENAME}" "${FILEOUT}"
+      rm "${FILENAME}.intermediate"
       return
     fi
 
-    if [[ "$FILEOUT" =~ \.tar$ ]] ; then                    # If $FILEOUT is a tar archive, extract to disk.
-      tar -xf "$FILEOUT"
-      rm "$FILEOUT"
+    if [[ $(file ${FILENAME}.decrypted | grep tar) ]] ; then                    # If $FILENAME is a tar archive, extract to disk.
+      if [[ ! "$FILENAME" =~ \.tar$ ]] ; then
+        mv ${FILENAME}.decrypted ${FILENAME}.tar
+      fi
+      tar -xf "${FILENAME}.tar"
+      rm "${FILENAME}.tar"
     fi
-    rm "${FILENAME}"             # Clean up intermediary files.
+    rm "${FILENAME}.intermediate"             # Clean up intermediary files.
 
-    echo "Now you safely remove the encrypted file."
+    echo "Now you can safely remove the encrypted file."
   else
     echo "usage: decrypt source_file.aes-256-cbc"
   fi
